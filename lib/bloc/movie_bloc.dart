@@ -1,36 +1,15 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:movie_list_app/bloc/bloc_event.dart';
+import 'package:movie_list_app/bloc/bloc_state.dart';
 import 'package:movie_list_app/models/movie_detail.dart';
 import '../models/movie.dart';
 import '../api/movie_api_service.dart';
 import 'package:hive/hive.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import '../utils/error_handler.dart';
 
-// Events
-abstract class MovieEvent {}
-class FetchMovies extends MovieEvent {}
-class FetchMovieDetail extends MovieEvent {
-  final String imdbId;
-  FetchMovieDetail(this.imdbId);
-}
 
-// States
-abstract class MovieState {}
-class MovieInitial extends MovieState {}
-class MovieLoading extends MovieState {}
-class MovieLoaded extends MovieState {
-  final List<Movie> movies;
-  final bool isOffline;
-  MovieLoaded(this.movies, {this.isOffline = false});
-}
-class MovieDetailLoaded extends MovieState {
-  final MovieDetail detail;
-  MovieDetailLoaded(this.detail);
-}
-class MovieError extends MovieState {
-  final String message;
-  MovieError(this.message);
-}
 
 class MovieBloc extends Bloc<MovieEvent, MovieState> {
   final MovieApiService _apiService;
@@ -75,39 +54,21 @@ class MovieBloc extends Bloc<MovieEvent, MovieState> {
   }
 
   Future<void> _onFetchMovieDetail(FetchMovieDetail event, Emitter<MovieState> emit) async {
-    emit(MovieLoading());
-    try {
-      if (event.imdbId.isEmpty) {
-        emit(MovieError("Invalid IMDB ID"));
-        return;
-      }
+    if (state is MovieLoaded) {
+      final currentMovies = (state as MovieLoaded).movies;
+      emit(MovieDetailLoading(currentMovies));
       
-      final detail = await _apiService.getMovieDetails(
-        event.imdbId,
-        "66d21b38", // OMDB API key
-      );
-      emit(MovieDetailLoaded(detail));
-    } catch (e) {
-      if (e is DioError) {
-        emit(MovieError(_handleError(e)));
-      } else {
-        emit(MovieError("Failed to load movie details"));
+      try {
+        final detail = await _apiService.getMovieDetails(event.imdbId, "66d21b38");
+        emit(MovieDetailLoaded(currentMovies, detail));
+      } catch (e) {
+        emit(MovieError(ErrorHandler.getErrorMessage(e)));
+        emit(MovieLoaded(currentMovies)); // Restore previous state on error
       }
     }
   }
 
   String _handleError(error) {
-    switch (error.response?.statusCode) {
-      case 400:
-        return "Invalid request. Please try again.";
-      case 401:
-        return "Unauthorized. Please login again.";
-      case 404:
-        return "The requested resource was not found.";
-      case 500:
-        return "Server error. Please try again later.";
-      default:
-        return "An error occurred. Please try again.";
-    }
+    return ErrorHandler.getErrorMessage(error);
   }
 }
